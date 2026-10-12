@@ -17,9 +17,46 @@ export default function NookApp() {
     }
     let stop: (() => void) | undefined;
     let gone = false;
-    import("@/lib/nook-boot").then(({ bootNook }) => {
+    import("@/lib/nook-boot").then(async ({ bootNook }) => {
       if (gone) return;
-      stop = bootNook();
+      const nook = bootNook({ externalLoop: true });
+      if (!nook.canvas || !nook.renderer || !nook.scene || !nook.camera) {
+        stop = () => nook.dispose();
+        return;
+      }
+      const [{ createRoot, events, extend }, THREE, { default: DeskAddons }] = await Promise.all([
+        import("@react-three/fiber"),
+        import("three"),
+        import("@/components/scene/DeskAddons"),
+      ]);
+      if (gone) {
+        nook.dispose();
+        return;
+      }
+      extend(THREE);
+      const root = createRoot(nook.canvas);
+      await root.configure({
+        gl: nook.renderer,
+        camera: nook.camera,
+        scene: nook.scene,
+        events,
+        frameloop: "always",
+        shadows: true,
+        dpr: [1, 2],
+        onCreated: (state) => {
+          state.set({ controls: nook.controls });
+        },
+      });
+      if (gone) {
+        root.unmount();
+        nook.dispose();
+        return;
+      }
+      root.render(<DeskAddons tick={nook.tick} />);
+      stop = () => {
+        root.unmount();
+        nook.dispose();
+      };
     });
     return () => {
       gone = true;
