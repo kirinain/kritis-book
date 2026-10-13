@@ -67,10 +67,10 @@ export default function NookApp() {
 
   return (
     <>
-      <div id="stage" aria-label="Kriti’s Book, a 3D study nook" />
+      <div id="stage" aria-label="Kiti's Book, a 3D study nook" />
       <header className="top">
         <div className="brand">
-          Kriti’s <i>Book</i>
+          Kiti's <i>Book</i>
         </div>
         <div style={{ display: "flex", gap: 8, pointerEvents: "auto", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <Link className="flat-link" href="/read">
@@ -123,7 +123,7 @@ export default function NookApp() {
       <div className="tip" id="tip" hidden />
       <div className="loader" id="loader">
         <b>
-          Kriti’s <i>Book</i>
+          Kiti's <i>Book</i>
         </b>
         <span>tidying up the desk…</span>
       </div>

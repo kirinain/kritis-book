@@ -87,7 +87,7 @@ export default function NoteBoard({
   position = [0.02, 1.17, 0.016],
   slots = DEFAULT_SLOTS,
   padSlot = [0.05, -0.17],
-  pinnedNotes = [{ text: 'welcome in! leave me a little note', name: 'Kriti', color: NOTE_COLORS[1] }],
+  pinnedNotes = [{ text: 'welcome in! leave me a little note', name: 'Kiriti', color: NOTE_COLORS[1] }],
   endpoint = '/api/notes',
   pollMs = 15000,
   fontFamily = '"Caveat", "Segoe Print", cursive',

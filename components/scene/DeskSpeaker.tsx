@@ -1,12 +1,16 @@
 'use client';
 /**
  * DeskSpeaker · a small cream-and-pink speaker that sits next to the book.
- * Tap it to play, tap again to pause. While playing, the woofer pulses,
+ * Tap it to play, tap again to pause. Tap again later and it carries on from
+ * exactly where it stopped. While playing, the woofer moves with the music,
  * the light on top glows and little music notes float up.
  *
- * Music: pass `src="/music/your-track.mp3"` (put the file in /public/music).
- * The woofer then moves with the real sound. With no `src` it still animates,
- * so you can wire music in later. Use `onToggle` to drive your own player instead.
+ * Music: the track lives in /public/music (default: secret-of-us-piano.mp3).
+ * - It only starts after a tap (browsers block sound before that).
+ * - It fades in on play and fades out on pause.
+ * - It loops, and remembers where you were, even after a page reload.
+ * - On phones, the lock screen shows the track with play/pause.
+ * Pass `onToggle` to know when it starts or stops (e.g. to show a "now playing" chip).
  *
  * Units are meters. `position` is the spot on the desk under the speaker.
  */
@@ -19,8 +23,10 @@ export type DeskSpeakerProps = {
   position?: [number, number, number];
   /** Which way the front faces, in radians (0 = toward +z, the viewer). */
   facing?: number;
-  /** Audio file to play, e.g. "/music/lofi.mp3". Optional for now. */
+  /** Audio file to play. Default: /music/secret-of-us-piano.mp3 */
   src?: string;
+  /** Shown on the phone lock screen while it plays. */
+  title?: string;
   volume?: number;
   /** Control it from outside. Leave undefined to let the speaker manage itself. */
   playing?: boolean;
@@ -60,11 +66,92 @@ function playIcon(playing: boolean) {
   return srgb(new THREE.CanvasTexture(c));
 }
 
+/* ------------------------------------------------------------------ */
+/* one shared music player for the whole page                           */
+/* (a remount of the speaker never starts a second copy of the song)    */
+/* ------------------------------------------------------------------ */
+type Music = {
+  el: HTMLAudioElement; ctx?: AudioContext; gain?: GainNode; analyser?: AnalyserNode; buf?: Uint8Array;
+  vol: number; play: () => Promise<void>; pause: () => void; setVolume: (v: number) => void;
+};
+let MUSIC: Music | null = null;
+const listeners = new Set<(on: boolean) => void>();
+const POS_KEY = 'kiti-music-pos';
+const FADE_IN = 0.8, FADE_OUT = 0.45;
+
+export function onMusicChange(fn: (on: boolean) => void) { listeners.add(fn); return () => listeners.delete(fn); }
+/** The shared <audio> element, if music has been started (handy for a "now playing" UI). */
+export function deskMusicElement() { return MUSIC?.el ?? null; }
+
+function getDeskMusic(src: string, title: string, volume: number): Music | null {
+  if (typeof window === 'undefined') return null;
+  if (MUSIC && MUSIC.el.dataset.src === src) return MUSIC;
+  MUSIC?.pause();
+  const el = new Audio(); el.dataset.src = src; el.src = src; el.loop = true; el.preload = 'auto'; el.crossOrigin = 'anonymous';
+  // pick up where the last visit left off
+  let resumeAt = 0, restored = true;
+  try { resumeAt = parseFloat(localStorage.getItem(POS_KEY) || '') || 0; } catch {}
+  if (resumeAt > 1) {
+    restored = false;
+    const seek = () => { if (!restored && el.duration && resumeAt < el.duration - 5) { el.currentTime = resumeAt; } restored = true; };
+    el.addEventListener('loadedmetadata', seek, { once: true });
+  }
+  const m: Music = { el, vol: volume, play: async () => {}, pause: () => {}, setVolume: () => {} };
+  try {
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx: AudioContext = new Ctx();
+    const node = ctx.createMediaElementSource(el), gain = ctx.createGain(), analyser = ctx.createAnalyser();
+    gain.gain.value = 0; analyser.fftSize = 256;
+    node.connect(gain); gain.connect(analyser); analyser.connect(ctx.destination);
+    Object.assign(m, { ctx, gain, analyser, buf: new Uint8Array(analyser.fftSize) });
+  } catch { el.volume = volume; /* no Web Audio: plain volume, no fades */ }
+
+  let pauseTimer = 0;
+  const ramp = (to: number, secs: number) => {
+    if (!m.ctx || !m.gain) { el.volume = to; return; }
+    const now = m.ctx.currentTime, gn = m.gain.gain;
+    gn.cancelScheduledValues(now); gn.setValueAtTime(gn.value, now); gn.linearRampToValueAtTime(to, now + secs);
+  };
+  const savePos = () => { if (!restored) return; try { localStorage.setItem(POS_KEY, String(el.currentTime)); } catch {} };
+  m.play = async () => {
+    window.clearTimeout(pauseTimer);
+    if (m.ctx && m.ctx.state !== 'running') await m.ctx.resume().catch(() => {});
+    await el.play();
+    ramp(m.vol, FADE_IN);
+  };
+  m.pause = () => {
+    if (el.paused) return;
+    ramp(0, FADE_OUT);
+    window.clearTimeout(pauseTimer);
+    pauseTimer = window.setTimeout(() => { el.pause(); savePos(); }, m.ctx ? FADE_OUT * 1000 + 30 : 0);
+  };
+  m.setVolume = (v) => { m.vol = v; if (!el.paused) ramp(v, 0.2); };
+
+  el.addEventListener('play', () => listeners.forEach((f) => f(true)));
+  el.addEventListener('pause', () => { savePos(); listeners.forEach((f) => f(false)); });
+  let lastSave = 0;
+  el.addEventListener('timeupdate', () => { if (Math.abs(el.currentTime - lastSave) >= 5) { lastSave = el.currentTime; savePos(); } });
+  window.addEventListener('pagehide', savePos);
+
+  // phone lock screen / headphone buttons
+  const ms = (navigator as any).mediaSession;
+  if (ms) {
+    try {
+      ms.metadata = new (window as any).MediaMetadata({ title, artist: 'Kiti’s Room', album: 'Kiti’s Book' });
+      ms.setActionHandler('play', () => { m.play().catch(() => {}); });
+      ms.setActionHandler('pause', () => m.pause());
+    } catch {}
+  }
+  MUSIC = m;
+  return m;
+}
+
 export default function DeskSpeaker({
   position = [0.33, 0.76, 0.42],
   facing = -0.35,
-  src,
-  volume = 0.7,
+  src = '/music/secret-of-us-piano.mp3',
+  title = 'The Secret of Us · calm piano',
+  volume = 0.6,
   playing,
   onToggle,
   bodyColor = '#F7F2EC',
@@ -87,39 +174,41 @@ export default function DeskSpeaker({
   const coneGeo = useMemo(() => new THREE.LatheGeometry([[0.004, 0.0], [0.012, 0.002], [0.024, 0.006], [0.03, 0.009]].map(([x, y]) => new THREE.Vector2(x, y)), 40), []);
   const handleGeo = useMemo(() => new THREE.TorusGeometry(0.03, 0.0045, 10, 32, Math.PI), []);
 
-  /* ---------- audio (only when a src is given) ---------- */
-  const audio = useRef<{ el: HTMLAudioElement; ctx?: AudioContext; analyser?: AnalyserNode; buf?: Uint8Array } | null>(null);
-  function ensureAudio() {
-    if (!src || audio.current) return audio.current;
-    const el = new Audio(src); el.loop = true; el.crossOrigin = 'anonymous'; el.volume = volume;
-    audio.current = { el };
-    try {
-      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx: AudioContext = new Ctx();
-      const node = ctx.createMediaElementSource(el), analyser = ctx.createAnalyser();
-      analyser.fftSize = 256; node.connect(analyser); analyser.connect(ctx.destination);
-      audio.current = { el, ctx, analyser, buf: new Uint8Array(analyser.fftSize) };
-    } catch { /* plays without the analyser; woofer falls back to a soft beat */ }
-    return audio.current;
-  }
-  // keep the audio element in step with the playing state (works for controlled mode too)
-  useEffect(() => {
-    const a = isPlaying ? ensureAudio() : audio.current; if (!a) return;
-    if (isPlaying) { a.ctx?.resume(); a.el.play().catch(() => { if (playing === undefined) setInner(false); }); }
-    else a.el.pause();
-  }, [isPlaying, src]);
-  useEffect(() => { if (audio.current) audio.current.el.volume = volume; }, [volume]);
-  useEffect(() => () => { const a = audio.current; if (a) { a.el.pause(); a.ctx?.close(); } audio.current = null; }, [src]);
+  /* ---------- audio ---------- */
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
 
-  const label = isPlaying ? 'Speaker · tap to pause' : 'Speaker · tap to play music';
+  const playNow = () => {
+    const m = getDeskMusic(src, title, volume); if (!m) return;
+    setStatus(m.el.readyState >= 3 ? 'idle' : 'loading');
+    m.play().then(() => setStatus('idle')).catch(() => { setStatus('error'); if (playing === undefined) setInner(false); onToggle?.(false); });
+  };
+  const pauseNow = () => { MUSIC?.pause(); };
+
+  // controlled mode: follow the `playing` prop
+  useEffect(() => {
+    if (playing === undefined) return;
+    if (playing) playNow(); else pauseNow();
+  }, [playing]);
+  useEffect(() => { if (MUSIC) MUSIC.setVolume(volume); }, [volume]);
+  // keep the button in step if the lock screen / headphones pause or play it
+  useEffect(() => {
+    const off = onMusicChange((on) => { if (playing === undefined) setInner(on); });
+    return () => { off(); };
+  }, [playing]);
+  // leaving the room (unmount) pauses gently and remembers the spot
+  useEffect(() => () => { MUSIC?.pause(); }, []);
+
+  const label = status === 'error' ? 'Speaker · music couldn’t load, tap to retry'
+    : status === 'loading' && isPlaying ? 'Speaker · loading…'
+    : isPlaying ? 'Speaker · tap to pause' : MUSIC && MUSIC.el.currentTime > 1 ? 'Speaker · tap to resume' : 'Speaker · tap to play music';
   useEffect(() => { if (hovered.current) onHoverChange?.(label); }, [label]);
 
   const toggle = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
     if (e.delta > 6) return;                  // ignore drags
     const next = !isPlaying;
-    if (next) ensureAudio();                  // create audio inside the click so browsers allow it
-    if (playing === undefined) setInner(next);
+    // start or stop right here, inside the tap, so every browser (iOS too) allows the sound
+    if (playing === undefined) { if (next) playNow(); else pauseNow(); setInner(next); }
     onToggle?.(next);
     tap.current = 1;
   };
@@ -131,12 +220,12 @@ export default function DeskSpeaker({
     const t = state.clock.elapsedTime;
     // how loud right now (0..1)
     let target = 0;
-    const a = audio.current;
-    if (isPlaying && a?.analyser && a.buf) {
+    const a = MUSIC;
+    if (isPlaying && a?.analyser && a.buf && !a.el.paused) {
       a.analyser.getByteTimeDomainData(a.buf as any);
       let sum = 0; for (let i = 0; i < a.buf.length; i++) { const v = (a.buf[i] - 128) / 128; sum += v * v; }
-      target = Math.min(1, Math.sqrt(sum / a.buf.length) * 4);
-    } else if (isPlaying) {
+      target = Math.min(1, Math.sqrt(sum / a.buf.length) * 6);
+    } else if (isPlaying && status !== 'loading') {
       target = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2 * 1.6)), 6) * 0.8 + 0.12 + 0.06 * Math.sin(t * 13);
     }
     level.current += (target - level.current) * Math.min(1, delta * 18);
@@ -147,10 +236,10 @@ export default function DeskSpeaker({
     ring.current.scale.setScalar(1 + l * 0.025);
     bodyRef.current.scale.set(1 + l * 0.008, 1 - tap.current * 0.06 + l * 0.012, 1 + l * 0.008);
     bodyRef.current.position.y = Math.abs(Math.sin(tap.current * 6)) * 0.004 * tap.current;
-    led.current.emissiveIntensity = isPlaying ? 1.2 + l * 1.5 : 0.08;
+    led.current.emissiveIntensity = status === 'loading' && isPlaying ? 0.4 + 0.8 * (0.5 + 0.5 * Math.sin(t * 8)) : isPlaying ? 1.2 + l * 1.5 : 0.08;
 
     // music notes floating up while it plays
-    if (isPlaying && t > spawnAt.current) {
+    if (isPlaying && status !== 'loading' && t > spawnAt.current) {
       spawnAt.current = t + 0.45 + Math.random() * 0.35;
       const free = notes.current.find((n) => n.t < 0);
       if (free) Object.assign(free, { t: 0, x: (Math.random() - 0.5) * 0.05, z: (Math.random() - 0.5) * 0.03, tex: Math.floor(Math.random() * 4), sway: Math.random() * 6 });

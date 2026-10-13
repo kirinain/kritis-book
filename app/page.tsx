@@ -7,7 +7,7 @@ export default function Home() {
       fallback={
         <div className="loader">
           <b>
-            Kriti’s <i>Book</i>
+            Kiti's <i>Book</i>
           </b>
           <span>tidying up the desk…</span>
         </div>

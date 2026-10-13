@@ -3,8 +3,8 @@ import Link from "next/link";
 const pages = [
   {
     folio: "Title",
-    title: "Kriti’s Book",
-    body: "Things I’ve built, things I’ve learned, and the questions I’m still exploring. Written and kept by Kriti Nain.",
+    title: "Kiti’s Book",
+    body: "Things I’ve built, things I’ve learned, and the questions I’m still exploring. Written and kept by Kiriti Nain.",
   },
   {
     folio: "iii",
@@ -39,7 +39,7 @@ const pages = [
   {
     folio: "15–16",
     title: "About the Author",
-    body: "Kriti Nain studies Electrical and Electronics Engineering at MAIT, Delhi, and is a product intern at NikahForever. The next chapter is unwritten.",
+    body: "Kiriti Nain studies Electrical and Electronics Engineering at MAIT, Delhi. The next chapter is unwritten.",
   },
 ];
 
@@ -48,7 +48,7 @@ export default function ReadPage() {
     <main className="read">
       <div className="read-bar">
         <strong style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 400 }}>
-          Kriti’s <i>Book</i>
+          Kiti’s <i>Book</i>
         </strong>
         <Link href="/?book=1">Try the 3D book</Link>
       </div>
