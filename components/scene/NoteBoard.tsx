@@ -7,6 +7,8 @@
  *   color and pin it. It flies onto the board and every other visitor sees it.
  * - Click any note to read it up close.
  * - New notes from other people show up on their own (checks every 15 s).
+ * - Printed pictures (`prints`, e.g. Kiti's two quotes) are pinned or taped on
+ *   too. Notes never land on top of them. Click one to see it big.
  *
  * Needs the API route in app/api/notes/route.ts (see NOTES-AND-POLAROIDS.md).
  * Units are meters. `position` is the centre of the pegboard's front face.
@@ -20,6 +22,27 @@ import { NOTE_COLORS } from '../../lib/noteColors';
 
 export type Note = { id: string; seq: number; text: string; color: string; name?: string; createdAt: number };
 export type PinnedNote = { text: string; color?: string; name?: string };
+export type PinnedPrint = {
+  /** Image in /public. */
+  src: string;
+  /** Size on the board in meters. */
+  w: number;
+  h: number;
+  /** Centre, [x, y] from the board centre. */
+  at: [number, number];
+  /** Small turn in radians, so it looks pinned by hand. */
+  tilt?: number;
+  /** Washi tape on the top corners, or one push pin. */
+  hold?: 'tape' | 'pin';
+  /** What it says, for the hover label and screen readers. */
+  label: string;
+};
+
+/** Kiti's two quote prints (files in /public/pegboard). */
+export const KITI_PRINTS: PinnedPrint[] = [
+  { src: '/pegboard/what-if-you-fly.jpg', w: 0.1, h: 0.151, at: [-0.2, -0.03], tilt: -0.035, hold: 'tape', label: 'What if I fall? Oh, but my darling, what if you fly?' },
+  { src: '/pegboard/museum-of-failure.jpg', w: 0.12, h: 0.082, at: [0.14, -0.035], tilt: 0.03, hold: 'pin', label: 'museum of failure or gallery of trying?' },
+];
 export type NoteBoardProps = {
   position?: [number, number, number];
   /** Free spots on the board, [x, y] from the board centre. Notes fill these. */
@@ -28,6 +51,8 @@ export type NoteBoardProps = {
   padSlot?: [number, number];
   /** Your own notes. Always shown, in the first slots. */
   pinnedNotes?: PinnedNote[];
+  /** Printed pictures on the board. Pass [] for none. */
+  prints?: PinnedPrint[];
   endpoint?: string;
   pollMs?: number;
   /** Handwriting font (must be loaded on the page). */
@@ -36,9 +61,10 @@ export type NoteBoardProps = {
 };
 
 // Spots that miss the pen cup, mini shelf and "you got this" card in the prototype layout.
+// Spots covered by a print are skipped on their own, so this list can stay as is.
 export const DEFAULT_SLOTS: [number, number][] = [
-  [-0.21, 0.04], [0.11, 0.04], [-0.45, 0.04], [0.41, 0.04],
-  [-0.45, 0.16], [-0.33, 0.16], [-0.21, 0.16], [-0.09, 0.16], [0.04, 0.16], [0.16, 0.16], [0.29, 0.16], [0.41, 0.16],
+  [-0.09, 0.16], [-0.21, 0.04], [0.11, 0.04], [-0.45, 0.04], [0.41, 0.04],
+  [-0.45, 0.16], [-0.33, 0.16], [-0.21, 0.16], [0.04, 0.16], [0.16, 0.16], [0.29, 0.16], [0.41, 0.16],
   [-0.45, -0.1], [-0.21, -0.1], [-0.08, -0.1], [0.16, -0.1], [0.41, -0.1],
 ];
 const S = 0.075;                       // note size in meters
@@ -88,6 +114,7 @@ export default function NoteBoard({
   slots = DEFAULT_SLOTS,
   padSlot = [0.05, -0.17],
   pinnedNotes = [{ text: 'welcome in! leave me a little note', name: 'Kiriti', color: NOTE_COLORS[1] }],
+  prints = KITI_PRINTS,
   endpoint = '/api/notes',
   pollMs = 15000,
   fontFamily = '"Caveat", "Segoe Print", cursive',
@@ -95,7 +122,7 @@ export default function NoteBoard({
 }: NoteBoardProps) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [fontV, setFontV] = useState(0);
-  const [overlay, setOverlay] = useState<null | { mode: 'write' } | { mode: 'read'; text: string; name?: string; color: string; when?: number }>(null);
+  const [overlay, setOverlay] = useState<null | { mode: 'write' } | { mode: 'read'; text: string; name?: string; color: string; when?: number } | { mode: 'print'; src: string; label: string }>(null);
   const fresh = useRef<string | null>(null);
 
   // load notes, then keep checking for new ones while the tab is visible
@@ -110,15 +137,22 @@ export default function NoteBoard({
     return () => { alive = false; clearInterval(id); };
   }, [endpoint, pollMs, fontFamily]);
 
+  // skip any spot a print covers (with a little breathing room)
+  const freeSlots = useMemo(() => slots.filter(([x, y]) => !prints.some((p) => {
+    const pad = 0.006 + S / 2;
+    return Math.abs(x - p.at[0]) < p.w / 2 + pad && Math.abs(y - p.at[1]) < p.h / 2 + pad;
+  })), [slots, prints]);
+
   // pinned notes take the first slots; visitor notes keep a stable slot each
   const placed: Placed[] = useMemo(() => {
+    const slots = freeSlots;
     const out: Placed[] = pinnedNotes.slice(0, slots.length).map((p, i) => ({ key: 'pin' + i, pinned: p, slot: slots[i] }));
     const free = slots.slice(out.length); if (!free.length) return out;
     const visible = [...notes].sort((a, b) => a.seq - b.seq).slice(-free.length);
     const used = new Set<number>();
     visible.forEach((n) => { let k = n.seq % free.length; while (used.has(k)) k = (k + 1) % free.length; used.add(k); out.push({ key: n.id, note: n, slot: free[k] }); });
     return out;
-  }, [notes, pinnedNotes, slots]);
+  }, [notes, pinnedNotes, freeSlots]);
 
   const hover = (l: string | null) => { if (typeof document !== 'undefined') document.body.style.cursor = l ? 'pointer' : 'auto'; onHoverChange?.(l); };
 
@@ -139,6 +173,9 @@ export default function NoteBoard({
           onOpen={() => setOverlay({ mode: 'read', text: p.note?.text ?? p.pinned!.text, name: p.note?.name ?? p.pinned?.name, color: p.note?.color ?? p.pinned?.color ?? NOTE_COLORS[0], when: p.note?.createdAt })}
         />
       ))}
+      {prints.map((p) => (
+        <Print key={p.src} print={p} onHover={(on) => hover(on ? `“${p.label}” · click to see it big` : null)} onOpen={() => setOverlay({ mode: 'print', src: p.src, label: p.label })} />
+      ))}
       <NotePad slot={padSlot} font={fontFamily} fontV={fontV} onHover={(on) => hover(on ? 'Leave a note on the board' : null)} onOpen={() => setOverlay({ mode: 'write' })} />
       {overlay && (
         <Html>
@@ -150,6 +187,8 @@ export default function NoteBoard({
               onClose={() => setOverlay(null)}
               onPinned={(n) => { fresh.current = n.id; setNotes((list) => [...list.filter((x) => x.id !== n.id), n]); setOverlay(null); }}
             />
+          ) : overlay.mode === 'print' ? (
+            <ViewPrint src={overlay.src} label={overlay.label} onClose={() => setOverlay(null)} />
           ) : (
             <ReadNote {...overlay} font={fontFamily} onClose={() => setOverlay(null)} />
           )}
@@ -200,6 +239,60 @@ function StickyNote({ id, text, name, color, slot, from, font, fontV, onHover, o
         <sphereGeometry args={[0.0055, 16, 12]} />
         <meshStandardMaterial color="#E58FA0" roughness={0.35} />
       </mesh>
+    </group>
+  );
+}
+
+/* ---------------- a printed picture, taped or pinned ---------------- */
+const printGeos = new Map<string, THREE.BufferGeometry>();
+function printPaper(w: number, h: number) {
+  const k = w + 'x' + h; const hit = printGeos.get(k); if (hit) return hit;
+  const g = new THREE.PlaneGeometry(w, h, 10, 14), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), t = (h / 2 - y) / h, side = Math.abs(x) / (w / 2);
+    p.setZ(i, t * t * 0.004 + t * side * side * 0.003);   // paper lifts a little at the bottom corners
+  }
+  g.computeVertexNormals(); printGeos.set(k, g); return g;
+}
+
+function Print({ print, onHover, onOpen }: { print: PinnedPrint; onHover: (on: boolean) => void; onOpen: () => void }) {
+  const { src, w, h, at, tilt = 0, hold = 'pin' } = print;
+  const g = useRef<THREE.Group>(null!), wob = useRef(0);
+  const tex = useMemo(() => {
+    const t = setSRGB(new THREE.Texture()); t.anisotropy = 8;
+    const img = new Image(); img.decoding = 'async';
+    img.onload = () => { t.image = img; t.needsUpdate = true; };
+    img.src = src;
+    return t;
+  }, [src]);
+  useEffect(() => () => tex.dispose(), [tex]);
+  useFrame(() => { wob.current *= 0.9; g.current.rotation.z = tilt + Math.sin(performance.now() / 60) * 0.03 * wob.current; });
+  const tape = '#F3C9C4';
+  return (
+    <group
+      ref={g}
+      position={[at[0], at[1], 0.0025]}
+      rotation-z={tilt}
+      onClick={(e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); if (e.delta > 6) return; wob.current = 1; onOpen(); }}
+      onPointerOver={(e) => { e.stopPropagation(); onHover(true); }}
+      onPointerOut={() => onHover(false)}
+    >
+      <mesh geometry={printPaper(w, h)} castShadow receiveShadow>
+        <meshStandardMaterial map={tex} color="#FFFFFF" roughness={0.88} side={THREE.DoubleSide} />
+      </mesh>
+      {hold === 'tape' ? (
+        [-1, 1].map((sx) => (
+          <mesh key={sx} position={[sx * (w / 2 - 0.006), h / 2 - 0.004, 0.0009]} rotation-z={sx * -0.62}>
+            <planeGeometry args={[0.042, 0.014]} />
+            <meshStandardMaterial color={tape} roughness={0.7} transparent opacity={0.78} />
+          </mesh>
+        ))
+      ) : (
+        <mesh position={[0, h / 2 - 0.009, 0.005]} castShadow>
+          <sphereGeometry args={[0.0058, 16, 12]} />
+          <meshStandardMaterial color="#C9A46A" metalness={0.6} roughness={0.35} />
+        </mesh>
+      )}
     </group>
   );
 }
@@ -287,6 +380,20 @@ function WriteNote({ endpoint, font, onClose, onPinned }: { endpoint: string; fo
           <button type="submit" disabled={!text.trim() || busy} style={{ ...btn, background: ink, color: '#FFFBF8', border: 0, opacity: !text.trim() || busy ? 0.5 : 1 }}>{busy ? 'Pinning…' : 'Pin it'}</button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function ViewPrint({ src, label, onClose }: { src: string; label: string; onClose: () => void }) {
+  useEsc(onClose);
+  return (
+    <div style={backdrop} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose(); }} onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-label={label}
+        style={{ display: 'grid', justifyItems: 'center', gap: 12, maxWidth: '100%', transform: 'rotate(-0.8deg)' }}>
+        <img src={src} alt={label}
+          style={{ display: 'block', maxWidth: 'min(520px, 100%)', maxHeight: 'calc(100vh - 140px)', objectFit: 'contain', background: '#fff', padding: 10, boxShadow: '0 24px 60px -20px rgba(58,46,43,0.55)' }} />
+        <button type="button" autoFocus onClick={onClose} style={{ ...btn, background: '#FFFBF8' }}>Close</button>
+      </div>
     </div>
   );
 }

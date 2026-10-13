@@ -7,6 +7,7 @@ import NoteBoard from "@/components/scene/NoteBoard";
 import ShelfBooks from "@/components/scene/ShelfBooks";
 import PaperFlyer from "@/components/scene/PaperFlyer";
 import PolaroidStack from "@/components/scene/PolaroidStack";
+import QuoteFrame from "@/components/scene/QuoteFrame";
 import SpinPencil from "@/components/scene/SpinPencil";
 
 function setAddonTip(label: string | null) {
@@ -46,6 +47,7 @@ export default function DeskAddons({ tick }: { tick: (now: number) => void }) {
       <PolaroidStack position={[-0.19, 0.76, 0.075]} onHoverChange={setAddonTip} />
       <NoteBoard position={[0.02, 1.17, 0.016]} onHoverChange={setAddonTip} />
       <ShelfBooks position={[-0.544, 1.567, 0.2]} onHoverChange={setAddonTip} />
+      <QuoteFrame position={[-0.15, 1.967, 0.05]} onHoverChange={setAddonTip} />
     </>
   );
 }
