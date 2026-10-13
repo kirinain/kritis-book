@@ -1,12 +1,24 @@
-services:
-  - type: web
-    name: kritis-book
-    runtime: node
-    plan: free
-    branch: main
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
-    healthCheckPath: /
-    envVars:
-      - key: NODE_VERSION
-        value: "20"
+   services:
+     - type: web
+       name: kritis-book
+       runtime: node
+       plan: free
+       region: singapore
+       branch: main
+       buildCommand: npm ci && npm run build
+       startCommand: npm start
+       healthCheckPath: /
+       autoDeployTrigger: commit
+       domains:
+         - kitinain.me
+       envVars:
+         - key: NODE_VERSION
+           value: "20"
+         - key: NEXT_TELEMETRY_DISABLED
+           value: "1"
+         - key: UPSTASH_REDIS_REST_URL
+           sync: false
+         - key: UPSTASH_REDIS_REST_TOKEN
+           sync: false
+         - key: NOTES_ADMIN_TOKEN
+           generateValue: true
