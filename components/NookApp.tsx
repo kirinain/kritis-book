@@ -33,7 +33,7 @@ export default function NookApp() {
         nook.dispose();
         return;
       }
-      extend(THREEas unknown as Parameters<typeof extend>[0]);
+      extend(THREE as unknown as Parameters<typeof extend>[0]);
       const root = createRoot(nook.canvas);
       await root.configure({
         gl: nook.renderer,
